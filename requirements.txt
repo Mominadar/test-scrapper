@@ -1,0 +1,4 @@
+fastapi==0.111.0
+PyVirtualDisplay==3.0
+selenium==3.141.0
+uvicorn==0.30.1
