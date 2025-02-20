@@ -1,23 +1,11 @@
-# import external libraries.
 import os
-import platform
-import time
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from pyvirtualdisplay import Display
-# run server
-from datetime import datetime
-from fastapi import FastAPI
-import uvicorn
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from selenium.webdriver.common.by import By
+from db.index import  MongoDBHandler
+from dotenv import load_dotenv
 
-
-# set xvfb display since there is no GUI in docker container.
-if platform.system() == 'Linux':
-    display = Display(visible=0, size=(800, 600))
-    display.start()
+load_dotenv()
 
 chrome_options = Options()
 chrome_options.add_argument('--no-sandbox')
@@ -26,40 +14,47 @@ chrome_options.add_argument("start-maximized")
 chrome_options.add_argument("disable-infobars")
 chrome_options.add_argument("--disable-extensions")
 chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument('--headless')
+chrome_options.add_argument("--headless")
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
+def convert_to_float(s):
+    try:
+        # Remove commas
+        s = s.replace(',', '')
+        return float(s)
+    except ValueError:
+        raise ValueError(f"Cannot convert '{s}' to float.")
 
 
-# basic routes
-@app.get("/")
-def translate_text():
-    print('building session')
-    if platform.system() == 'Linux':
-        chromedriver_path = os.path.join(os.getcwd(),'chromedriver','chromedriver-linux64','chromedriver')
-    else:
-        chromedriver_path = os.path.join(os.getcwd(),'chromedriver','chromedriver_mac')
+def get_emissions_stats():  
+    stats = dict()  
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.get('https://www.epa.gov/energy/greenhouse-gas-equivalencies-calculator?unit=MCF&amount=1#results')
+    results_table = driver.find_element(By.ID, "results_table")
+    result_containers = results_table.find_elements(By.XPATH, "//div[contains(@class, 'roundbox-container')]")
+    for container in result_containers:
+        round_boxes = container.find_elements(By.TAG_NAME, "div")
+        for round_box in round_boxes:
+            value = round_box.find_element(By.TAG_NAME,"input").get_attribute("value")
+            description = round_box.find_element(By.TAG_NAME,"p").text
+            print("stat", value, description)
+            if "homes' energy use" in description:
+                stats["home_enery_use_one_year"] = value
+            if "gallons of diesel" in description:
+                stats["diesel_gallons"] = value
+            if "smartphones" in description:
+                stats["smartphones_charged"] = value
 
-    print(f'dirver path: {chromedriver_path}')
-
-    driver = webdriver.Chrome(executable_path=chromedriver_path, options=chrome_options)
-    print('ggggggg 1')
-    driver.get('https://www.google.com/')
-    print('ggggggg 2')
-    time.sleep(2)
+    print(stats)
     driver.close()
-    if platform.system() == 'Linux':
-        # close chromedriver and display
-        display.stop()
-    return datetime.now()
 
+    handler = MongoDBHandler(
+        uri= os.environ.get("DB_URL"),
+        db_name= os.environ.get("DB_NAME"),
+        collection_name=os.environ.get("COLLECTION_NAME")
+    )
+
+    handler.connect()
+    handler.save_emission(convert_to_float(stats["home_enery_use_one_year"]), convert_to_float(stats["diesel_gallons"]), convert_to_float(stats["smartphones_charged"]), 2, 8, 2025)
+    
 if __name__ == '__main__':
-    uvicorn.run(app, port=8000, host='0.0.0.0')
+    get_emissions_stats()
